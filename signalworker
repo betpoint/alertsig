@@ -1,0 +1,88 @@
+import os
+import psycopg2
+import requests
+import schedule
+import time
+import logging
+
+# --- Logging setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Environment Variables (Render will use these) ---
+DB_NAME = os.getenv("DB_NAME", "postgres")
+DB_USER = os.getenv("DB_USER", "postgres.iznxrukdqbrcxjzhvwyk")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "ZHITafYu6WJqNqjJ")
+DB_HOST = os.getenv("DB_HOST", "aws-0-us-west-1.pooler.supabase.com")
+DB_PORT = os.getenv("DB_PORT", "6543")
+
+ONE_SIGNAL_API_URL = "https://onesignal.com/api/v1/notifications"
+ONE_SIGNAL_APP_ID = os.getenv("ONE_SIGNAL_APP_ID", "2b94ad70-2518-44d4-aaef-bfb95739206f")
+ONE_SIGNAL_API_KEY = os.getenv("ONE_SIGNAL_API_KEY", "os_v2_app_fokk24bfdbcnjkxpx64voojan6vjeay5gqzudyerx6sovdjmibfcnf7iv3a3eoz5ua3sitqktafygq66zfavnyovleplfqvxm2fdzmi")
+
+# --- Database connection details ---
+conn_details = {
+    'dbname': DB_NAME,
+    'user': DB_USER,
+    'password': DB_PASSWORD,
+    'host': DB_HOST,
+    'port': DB_PORT
+}
+
+# --- Track notified IDs ---
+notified_ids = set()
+
+def send_notification(message):
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Authorization": f"Basic {ONE_SIGNAL_API_KEY}"
+    }
+    payload = {
+        "app_id": ONE_SIGNAL_APP_ID,
+        "included_segments": ["All"],
+        "headings": {"en": "New Data Alert"},
+        "contents": {"en": message}
+    }
+    try:
+        response = requests.post(ONE_SIGNAL_API_URL, headers=headers, json=payload)
+        if response.status_code == 200:
+            logging.info(f"✅ Notification sent: {message}")
+        else:
+            logging.error(f"❌ Failed ({response.status_code}): {response.text}")
+    except Exception as e:
+        logging.error(f"Error sending notification: {e}")
+
+def check_new_rows():
+    logging.info("🔍 Checking for new rows in signal_main...")
+    try:
+        conn = psycopg2.connect(**conn_details)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, home_team, away_team, league
+            FROM signal_main
+            WHERE odds < 20
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        for row in rows:
+            row_id = row[0]
+            if row_id not in notified_ids:
+                notified_ids.add(row_id)
+                message = f"New Signal: ID {row_id} | {row[1]} vs {row[2]} ({row[3]})"
+                send_notification(message)
+                logging.info(f"📢 Notified: {row_id}")
+
+    except Exception as e:
+        logging.error(f"Database error: {e}")
+
+schedule.every(15).seconds.do(check_new_rows)
+
+logging.info("🚀 Worker started: polling every 15 seconds.")
+while True:
+    try:
+        schedule.run_pending()
+        time.sleep(1)
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        time.sleep(5)

@@ -51,7 +51,7 @@ def check_new_rows():
         cursor.execute("""
             SELECT id, home_team, away_team, league
             FROM signal_main
-            WHERE odds < 20
+            WHERE odds < 20 and diff != '4' and odds != 4.5
             ORDER BY date_time DESC
         """)
         rows = cursor.fetchall()
